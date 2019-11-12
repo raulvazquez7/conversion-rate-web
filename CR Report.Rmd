@@ -1,0 +1,248 @@
+---
+title: "Metriplica"
+author: "Raul Vazquez"
+date: "7 de noviembre de 2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include = FALSE}
+chooseCRANmirror(graphics=FALSE, ind=1)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Wrangling
+
+Instalamos paquetes y leemos el Dataset
+
+```{r, message = FALSE}
+install.packages("pacman")
+pacman::p_load(readr, lubridate, dplyr, ggplot2, plotly)
+
+df <- read_csv("~/Raúl Vázquez/Personal/Test Metriplica/results_df.csv")
+```
+
+Comprobamos si existen NA's
+
+```{r}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+Entendemos los datos
+
+```{r}
+str(df)
+```
+
+```{r}
+summary(df)
+```
+
+Limpieza de datos general
+
+```{r, message=FALSE}
+df$date <- lubridate:: ymd(df$date) #Fecha
+
+df$channelGrouping <- sub("(^[^-]+)-.*", "\\1", df$channelGrouping) # Nos quedamos con el primer grupo
+
+col_names <- c("channelGrouping","userAgeBracket","userType")
+df[,col_names] <- lapply(df[,col_names] , factor) # Convertimos varias columnas a factor
+rm(col_names) 
+``` 
+
+Creamos la columna Conversion Rate para el análisis
+
+```{r, message=FALSE}
+df$conversionRate <- (df$transactions/df$sessions)*100
+``` 
+
+
+## Data Exploratory Analysis
+
+Sobre toda nuestra audiencia, vemos por grupos el Conversion Rate de media para entender cual es nuestro o nuestros "Customer persona" ideal. 
+
+```{r message = FALSE}
+mean_df <- aggregate(df$conversionRate, df[,2:4] , mean)
+colnames(mean_df)[4] <- "conversionRate"
+```
+```{r}
+mean_df[order(mean_df$conversionRate, decreasing = TRUE), ]
+```
+
+Comprobamos que días han habido los picos más elevados de CR (Filtramos por un CR mayor al 30%)
+
+```{r}
+high_cr <- df %>% dplyr::filter(conversionRate >= 30)
+head(high_cr, 11)
+```
+
+Comprobamos mediante la visualización de gráficos la pregunta clave de nuestro análisis " ¿qué tipo de impacto tiene el aumento o reducción de un tipo de audiencia sobre el CR? " . Para ello en un mismo gráfico observaremos el número de sesiones (suma) y la media de Conversion Rate por cada tipo de audiencia.
+
+```{r}
+mean_channel <- aggregate(list(conversionRate = df$conversionRate), list(channelGrouping = factor(df$channelGrouping)), mean) 
+
+plot_ly(mean_channel,x = mean_channel$channelGrouping, y = mean_channel$conversionRate ,type = "scatter", mode = "markers",
+        name = "Conversion Rate") %>%
+  add_trace(df,x = df$channelGrouping, y = df$sessions ,type = "scatter", mode = "markers",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = df$channelGrouping,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions (sum) per Channel",
+         xaxis = list(title = "Channel Group"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%"),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",title = "Sessions (Millions)")) #CR and Sessions per Channel
+
+mean_age <- aggregate(list(conversionRate = df$conversionRate), list(userAgeBracket = factor(df$userAgeBracket)), mean) 
+
+plot_ly(mean_age,x = mean_age$userAgeBracket, y = mean_age$conversionRate ,type = "scatter", mode = "markers",
+        name = "Conversion Rate") %>%
+  add_trace(df,x = df$userAgeBracket, y = df$sessions ,type = "scatter", mode = "markers",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = df$userAgeBracket,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions (sum) per Age Bracket",
+         xaxis = list(title = "Age Bracket"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%"),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",title = "Sessions (Millions)")) #CR and Sessions per Age
+
+mean_type <- aggregate(list(conversionRate = df$conversionRate), list(userType = factor(df$userType)), mean) 
+
+plot_ly(mean_type,x = mean_type$userType, y = mean_type$conversionRate ,type = "scatter", mode = "markers",
+        name = "Conversion Rate") %>%
+  add_trace(df,x = df$userType, y = df$sessions ,type = "scatter", mode = "markers",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = df$userType,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions (sum) per User Type",
+         xaxis = list(title = "User Type"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%", range = c(0.4, 1.6)),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",title = "Sessions (Millions)")) #CR and Sessions per User Type
+
+```
+
+Ahora comprobaremos la evolución de las Sesiones y el Conversion Rate durante el 2019 con diferentes granuralidades.
+
+```{r, message = FALSE}
+byday <- df %>% dplyr::group_by(date=floor_date(date, "day")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by day
+```
+```{r}
+byday_y2 <- df %>% dplyr::group_by(date=floor_date(date, "day")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week for the second y axes
+byday_y2$conversionRate <- byday_y2$transactions/byday_y2$sessions*100
+
+plot_ly(byday_y2,x = byday_y2$date, y = byday_y2$conversionRate ,type = "scatter", mode = "lines",
+        name = "Conversion Rate") %>%
+  add_trace(byday,x = byday$date, y = byday$sessions ,type = "scatter", mode = "lines",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = byday$date,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions in 2019 by day (all audience)",
+         xaxis = list(title = "Time"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%", range = c(0.1, 2.4)),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",
+                       title = "Sessions (Miles)", range = c(10000, 130000))) #CR and Sessions per User Type
+
+byweek <- df %>% dplyr::group_by(date=floor_date(date, "week")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week for the first y axes
+
+byweek_y2 <- df %>% dplyr::group_by(date=floor_date(date, "week")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week for the second y axes
+byweek_y2$conversionRate <- byweek_y2$transactions/byweek_y2$sessions*100
+
+plot_ly(byweek_y2,x = byweek_y2$date, y = byweek_y2$conversionRate ,type = "scatter", mode = "lines",
+        name = "Conversion Rate") %>%
+  add_trace(byweek,x = byweek$date, y = byweek$sessions ,type = "scatter", mode = "lines",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = byweek$date,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions in 2019 by week (all audience)",
+         xaxis = list(title = "Time"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%", range = c(0.2, 2)),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",
+                       title = "Sessions (Miles)", range = c(25000, 700000))) #CR and Sessions per User Type
+
+bymonth <- df %>% dplyr::group_by(date=floor_date(date, "month")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by month
+
+bymonth_y2 <- df %>% dplyr::group_by(date=floor_date(date, "month")) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week for the second y axes
+bymonth_y2$conversionRate <- bymonth_y2$transactions/bymonth_y2$sessions*100
+
+
+plot_ly(bymonth_y2,x = bymonth_y2$date, y = bymonth_y2$conversionRate ,type = "scatter", mode = "lines",
+        name = "Conversion Rate") %>%
+  add_trace(bymonth,x = bymonth$date, y = bymonth$sessions ,type = "scatter", mode = "lines",
+            name = "Sessions", yaxis = "y2",
+            transforms = list(list(
+              type = "aggregate",
+              groups = bymonth$date,
+              aggregations = list(list(target = "y", func = "sum",enabled = TRUE))))) %>%
+  layout(title = "Conversion (mean) and Sessions in 2019 by month (all audience)",
+         xaxis = list(title = "Time"),
+         yaxis = list(showline = TRUE, side = "left",title = "Conversion Rate (mean)", ticksuffix = "%", range = c(0.3, 1.8)),
+         yaxis2 = list(showline = TRUE,side = "right",overlaying = "y",
+                       title = "Sessions (Millions)", range = c(1000000, 2700000))) #CR and Sessions per User Type
+```
+
+Ahora comprobaremos la evolución del Conversion Rate en el 2019 por cada audiencia, con el fin de entender como compra cada uno de nuestros segmentos de clientes durante el año. Para ello escogemos una granularidad de semana para poder visualizar el dato sin ruido.
+
+```{r}
+byweek_type <- df %>% dplyr::group_by(date=floor_date(date, "week"), userType) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week
+
+byweek_type %>%
+  ungroup() %>%
+plot_ly( x = byweek_type$date, y = ~(transactions/sessions)*100, color = ~userType,
+         mode = "lines", type = "scatter") %>%
+  layout(yaxis = list(ticksuffix = "%")) %>%
+  layout(title = "Conversion Rate per User Type in 2019 per week",
+         xaxis = list(title = "Time"),
+         yaxis = list (title = "Conversion Rate")) #CR per Month
+
+byweek_channel <- df %>% dplyr::group_by(date=floor_date(date, "week"), channelGrouping) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week
+
+byweek_channel %>%
+  ungroup() %>%
+  plot_ly( x = byweek_channel$date, y = ~(transactions/sessions)*100, color = ~channelGrouping,
+           mode = "lines", type = "scatter") %>%
+  layout(yaxis = list(ticksuffix = "%")) %>%
+  layout(title = "Conversion Rate per Channel in 2019 per week",
+         xaxis = list(title = "Time"),
+         yaxis = list (title = "Conversion Rate")) #CR per Month
+
+byweek_age <- df %>% dplyr::group_by(date=floor_date(date, "week"), userAgeBracket) %>%
+  dplyr::summarize_at(vars(sessions, transactions), funs(sum)) #grouping by week
+
+byweek_age %>%
+  ungroup() %>%
+  plot_ly( x = byweek_age$date, y = ~(transactions/sessions)*100, color = ~userAgeBracket,
+           mode = "lines", type = "scatter") %>%
+  layout(yaxis = list(ticksuffix = "%")) %>%
+  layout(title = "Conversion Rate per Age Bracket in 2019 per week",
+         xaxis = list(title = "Time"),
+         yaxis = list (title = "Conversion Rate")) #CR per Month
+```
+
+Ahora entenderemos si existe relación entre el número de sessiones y el Conversion Rate, es decir, si a más sesiones más alto es el Conversion Rate
+
+```{r}
+ggplot(df, aes(x = df$sessions, y = df$conversionRate))+
+  geom_point()+
+  geom_smooth(method = "lm")
+```
+
+
+
